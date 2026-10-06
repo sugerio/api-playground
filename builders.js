@@ -24,11 +24,51 @@
     return product?.info?.gcpProduct?.listingSpec?.purchaseSpec?.purchaseOptionSpecs || [];
   }
 
+  // ---- Features ------------------------------------------------------------------------------
+  //
+  // An offer may override the values of its plan's features (info.gcpFeatures). Feature names
+  // are fixed: the backend refuses any name the plan does not declare (ValidateOfferFeatures).
+  // The console offers the edit on fixed-price plans and on Professional Services products; a
+  // pay-as-you-go plan keeps the listing's features.
+  function featuresEditable(plan, product) {
+    if (!plan?.featureValues?.length) return false;
+    const priceModel = plan.priceInfo?.priceModel;
+    return (
+      priceModel === "SUBSCRIPTION" ||
+      priceModel === "SUBSCRIPTION_PLUS_USAGE" ||
+      product?.productType === "PROFESSIONAL_SERVICES"
+    );
+  }
+
+  function planFeatures(plan) {
+    return (plan?.featureValues || []).map((feature) => ({ ...feature }));
+  }
+
+  // The features an amendment starts from: the original offer's own list (Suger side, then the
+  // GCP side), the same order the console uses. Empty when the original never customized them.
+  function baseFeatures(baseOffer) {
+    const features = baseOffer.info?.gcpFeatures || baseOffer.info?.gcpPrivateOffer?.features || [];
+    return features.map((feature) => ({ ...feature }));
+  }
+
+  // Keeps the fields the API reads, and only the features the plan declares.
+  function cleanFeatures(features, plan) {
+    const declared = new Set((plan?.featureValues || []).map((f) => f.featureName));
+    return (features || [])
+      .filter((f) => declared.has(f.featureName))
+      .map((f) => ({
+        featureName: f.featureName,
+        ...(f.featureTitle ? { featureTitle: f.featureTitle } : {}),
+        ...(f.featureDescription ? { featureDescription: f.featureDescription } : {}),
+        featureValue: String(f.featureValue ?? ""),
+      }));
+  }
+
   // ---- Case 1: brand-new private offer ------------------------------------------------------
   //
   // params: { orgId, product, planName, billingAccount, offerName, recurrence, duration,
   //           amount, discountPercentage, usagePlanPriceModel, expireInDays,
-  //           customerOrganization, contactName, salesContactEmail }
+  //           customerOrganization, contactName, salesContactEmail, features }
   function buildNewPrivateOffer(params) {
     const plan = productPlans(params.product).find((p) => p.name === params.planName);
     if (!plan) throw new Error(`product ${params.product?.id} has no plan "${params.planName}"`);
@@ -60,6 +100,10 @@
       gcpProviderInternalNote: "Created by the GCP private offer API demo",
     };
     if (usagePlanPriceModel) info.gcpUsagePlanPriceModel = usagePlanPriceModel;
+    if (featuresEditable(plan, params.product)) {
+      const features = cleanFeatures(params.features || planFeatures(plan), plan);
+      if (features.length) info.gcpFeatures = features;
+    }
     // USAGE_DISCOUNT_ONLY has no flat fee or commitment to charge.
     if (!discountOnly) info.commitAmount = Number(params.amount);
     // A blanket usage discount only means something on a plan that carries usage.
@@ -84,6 +128,25 @@
   }
 
   // ---- Case 2: amendment (replacement) of the offer behind an entitlement --------------------
+
+  // info.gcpDuration counts billing periods, not months: 2 on YEARLY_PERIOD is two years
+  // (partner/gcp/marketplace_offer_api_util.go buildPrivateOfferTerm).
+  const MONTHS_PER_PERIOD = { MONTHLY_PERIOD: 1, QUARTERLY_PERIOD: 3, YEARLY_PERIOD: 12 };
+
+  // The recurrence the amendment is sent with. USAGE_DISCOUNT_ONLY has no billing cadence of
+  // its own; GCP needs Monthly + POSTPAY for it (the console does the same).
+  function amendmentRecurrence(base, plan) {
+    const discountOnly =
+      plan?.priceInfo?.priceModel === "USAGE" && base.usagePlanPriceModel === "USAGE_DISCOUNT_ONLY";
+    return discountOnly ? "MONTHLY_PERIOD" : base.recurrence || "MONTHLY_PERIOD";
+  }
+
+  // The original term in billing periods of the amendment's recurrence, used as the default
+  // duration. GCP reports the term in months whatever the recurrence.
+  function defaultAmendmentDuration(base, plan) {
+    const months = MONTHS_PER_PERIOD[amendmentRecurrence(base, plan)] || 1;
+    return Math.max(1, Math.round((base.termMonths || 12) / months));
+  }
 
   // The base offer's usage price model. info.gcpUsagePlanPriceModel is authoritative; a synced
   // offer may only carry GCP's priceModel, so derive from it the way the console does.
@@ -118,8 +181,9 @@
       billingAccount: stripBillingAccountPrefix(gcp.customerInfo?.unverifiedBillingAccount),
       usagePlanPriceModel: baseUsagePlanPriceModel(baseOffer),
       recurrence: baseOffer.info?.gcpPaymentRecurrence || gcp.offerTerm?.paymentRecurrence || "",
-      duration: baseOffer.info?.gcpDuration ?? gcp.offerTerm?.termDuration?.count,
+      termMonths: gcp.offerTerm?.termDuration?.count,
       discountPercentage: baseDiscountPercentage(baseOffer),
+      features: baseFeatures(baseOffer),
       // MaaS entitlements leave gcpEntitlements[].offer empty; fall back to the offer's own name.
       replacedOfferResourceName: latest.offer || gcp.name,
       // The replaced offer's own term end is GCP's raw value; entitlement.endTime is the fallback.
@@ -142,7 +206,11 @@
     return expire.toISOString();
   }
 
-  // params: { entitlement, baseOffer, product, offerName, discountPercentage, duration, expireInDays }
+  // params: { entitlement, baseOffer, product, offerName, discountPercentage, duration,
+  //           expireInDays, features }
+  //
+  // features: the edited list, or undefined to carry the original offer's features forward
+  // unchanged (what the console does when the seller doesn't touch them).
   function buildAmendmentOffer(params) {
     const { entitlement, baseOffer, product } = params;
     const base = describeBase(entitlement, baseOffer);
@@ -154,8 +222,7 @@
     const gcp = baseOffer.info?.gcpPrivateOffer || {};
     const usagePlanPriceModel = plan.priceInfo?.priceModel === "USAGE" ? base.usagePlanPriceModel : undefined;
     const discountOnly = usagePlanPriceModel === "USAGE_DISCOUNT_ONLY";
-    // USAGE_DISCOUNT_ONLY has no billing cadence; GCP needs Monthly + POSTPAY (console does the same).
-    const recurrence = discountOnly ? "MONTHLY_PERIOD" : base.recurrence || "MONTHLY_PERIOD";
+    const recurrence = amendmentRecurrence(base, plan);
     if (recurrence === "CUSTOM_PERIOD") {
       throw new Error("this demo amends standard-interval offers only; the base offer uses custom installments");
     }
@@ -185,12 +252,14 @@
       // So the replacement runs for an explicit duration from acceptance -- the console's
       // "Change Offer Duration" path.
       gcpCotermAlignment: "COTERM_ALIGNMENT_UNSPECIFIED",
-      gcpDuration: Number(params.duration || base.duration || 12),
+      gcpDuration: Number(params.duration || defaultAmendmentDuration(base, plan)),
       autoRenew: baseOffer.info?.autoRenew,
       gcpMaxRenewalTimes: baseOffer.info?.gcpMaxRenewalTimes,
       gcpProviderPublicNote: params.offerName,
     };
     if (gcp.proration) info.gcpPrivateOffer = { proration: gcp.proration };
+    const features = cleanFeatures(params.features ?? base.features, plan);
+    if (features.length) info.gcpFeatures = features;
     if (usagePlanPriceModel) info.gcpUsagePlanPriceModel = usagePlanPriceModel;
     if (discountOnly) info.gcpPaymentSchedule = "POSTPAY";
     if (!discountOnly && baseOffer.info?.commitAmount != null) info.commitAmount = baseOffer.info.commitAmount;
@@ -216,7 +285,10 @@
     };
   }
 
-  const api = { buildNewPrivateOffer, buildAmendmentOffer, describeBase, productPlans };
+  const api = {
+    buildNewPrivateOffer, buildAmendmentOffer, describeBase, productPlans,
+    featuresEditable, planFeatures, amendmentRecurrence, defaultAmendmentDuration, MONTHS_PER_PERIOD,
+  };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.OfferBuilders = api;
 })(typeof window !== "undefined" ? window : globalThis);

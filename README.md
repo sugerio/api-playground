@@ -76,6 +76,8 @@ The dev defaults are product `Q7In3Ar2u` (Suger Cloud GTM Platform For Dev) and 
 | ④ Create amendment | Creates the replacement offer and follows its status | `POST /org/{orgId}/offer` |
 
 The dev default entitlement is `843I8Frci`. Its offer is a pay-as-you-go plan with a 3% usage discount.
+To show feature editing on an amendment, use `3ozO8Frci` instead. Its offer is on the silver
+plan, billed yearly, and already has custom feature values.
 
 These fields are what make the new offer a replacement of the original rather than a new deal:
 
@@ -96,12 +98,33 @@ Some rules the builder follows, each of them enforced by the backend or by GCP:
   date (`ALIGN_END_TIME`) becomes a fixed end date, and GCP rejects fixed end dates on monthly,
   quarterly or yearly billing. So the amendment runs for the duration you enter, counted from
   when the buyer accepts it.
+- **Duration counts billing periods, not months.** `gcpDuration: 2` on a yearly offer means two
+  years. The field is labelled with its unit, shows the total in months, and defaults to the
+  original offer's term.
 - **Usage-discount-only offers** are sent with `MONTHLY_PERIOD` + `POSTPAY`, because that price
   model has no billing cadence of its own.
 - **Expiry** is capped at the day before the original offer's next installment charge, when it
   has one. GCP rejects a replacement that is still open on that date.
 - The builder only handles originals billed monthly, quarterly or yearly. Originals with custom
   installment schedules (`CUSTOM_PERIOD`) are refused with an error.
+
+## Features
+
+A GCP plan declares a list of features, such as "Transaction Count: Yes". An offer can override
+the **values** (`info.gcpFeatures`), but not the names. The backend rejects any feature name
+the plan doesn't declare.
+
+Each case has a **Features** table: one row per plan feature, with the value as an input, the
+plan's default beside it, a "changed" marker, and Reset buttons per row and for all rows.
+
+| | Starts from | Editable when |
+|---|---|---|
+| New offer | The selected plan's defaults. Switching plans resets them. | The plan is `SUBSCRIPTION` or `SUBSCRIPTION_PLUS_USAGE`, or the product is Professional Services |
+| Amendment | The original offer's own values, or the plan's defaults if it has none | Same rule, applied to the original offer's plan |
+
+These are the console's rules: pay-as-you-go (`USAGE`) plans keep the listing's features. When
+the table isn't editable, an amendment still carries the original offer's features forward
+unchanged, as the console does.
 
 ## After you press Create
 

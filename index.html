@@ -60,6 +60,13 @@
   .call pre { margin: 0; background: var(--code-bg); color: var(--code-ink); padding: 10px; max-height: 340px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
   .note { font-size: 12px; color: var(--muted); margin-top: 6px; }
   .callout { border-left: 3px solid var(--warn); padding: 6px 10px; background: var(--chip); border-radius: 4px; font-size: 12.5px; margin-top: 10px; }
+  table.features { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.features th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  table.features td { padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  table.features td.default { color: var(--muted); }
+  table.features tr.changed td:first-child::after { content: " · changed"; color: var(--warn); font-size: 11px; font-weight: 600; }
+  button.link { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+  button.link:disabled { color: var(--muted); cursor: default; }
   .callout.danger { border-left-color: var(--bad); color: var(--bad); font-weight: 600; }
   .muted { color: var(--muted); }
   [hidden] { display: none !important; }
@@ -122,6 +129,8 @@
       <label>Customer organization <input id="newCustomerOrg" value="Demo Customer"></label>
       <label>Sales contact email <input id="newSalesEmail" value="alvin@suger.io"></label>
     </div>
+    <h3>Features</h3>
+    <div id="newFeatures" class="muted">Load the product and pick a plan.</div>
     <div class="row">
       <button class="btn" id="newLoad">① Load product</button>
       <button class="btn" id="newBuild">② Build payload</button>
@@ -151,12 +160,15 @@
       <div class="grid">
         <label>Offer name <input id="amendName"></label>
         <label>Usage discount % <input id="amendDiscount" type="number" step="1"></label>
-        <label>Duration (months from acceptance) <input id="amendDuration" type="number" min="1" value="12"></label>
+        <label><span id="amendDurationLabel">Duration</span> <input id="amendDuration" type="number" min="1" value="12">
+          <span class="hint" id="amendDurationHint"></span></label>
         <label>Expires in (days) <input id="amendExpire" type="number" min="1" value="5"></label>
       </div>
       <div class="callout">Not co-termed. Through the GCP Commerce API, a co-termed amendment becomes a fixed
         end date, and Google rejects end dates on monthly/quarterly/yearly billing. So the amendment
         runs for the duration above, counted from when the buyer accepts it.</div>
+      <h3>Features</h3>
+      <div id="amendFeatures"></div>
       <div class="row"><button class="btn" id="amendBuild">② Build replacement payload</button></div>
     </div>
 
@@ -204,6 +216,9 @@ function applyEnvironment() {
   state.newProduct = null;
   state.amend = null;
   $("newPlan").innerHTML = '<option value="">Load product first</option>';
+  $("newFeatures").className = "muted";
+  $("newFeatures").dataset.editable = "0";
+  $("newFeatures").textContent = "Load the product and pick a plan.";
   $("amendBase").hidden = true;
   ["newPayload", "amendPayload"].forEach((id) => ($(id).value = ""));
   ["newResult", "amendResult"].forEach((id) => ($(id).innerHTML = ""));
@@ -385,6 +400,77 @@ async function createAndFollow(payloadId, resultId, stepsId, stepLabels, createS
 }
 
 // ---- Case 1: new private offer ----------------------------------------------------------
+// ---- features editor --------------------------------------------------------------------
+// One row per feature the plan declares: the value is editable, the plan default is shown
+// beside it, and a changed row is marked. Names are fixed because the backend refuses any
+// feature the plan does not declare.
+function formatFeatureTitle(feature) {
+  return feature.featureTitle ||
+    feature.featureName.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+function renderFeatureEditor(containerId, plan, product, startingFeatures) {
+  const box = $(containerId);
+  box.className = "";
+  box.innerHTML = "";
+  if (!OfferBuilders.featuresEditable(plan, product)) {
+    box.dataset.editable = "0";
+    box.className = "muted";
+    box.textContent = plan?.featureValues?.length
+      ? `Not editable on ${plan.name} (${plan.priceInfo?.priceModel}): as in the console, only fixed-price ` +
+        "plans and Professional Services offers can change feature values. The offer keeps its current features."
+      : `Plan ${plan?.name ?? ""} declares no features.`;
+    return;
+  }
+  box.dataset.editable = "1";
+  const defaults = OfferBuilders.planFeatures(plan);
+  const current = new Map((startingFeatures?.length ? startingFeatures : defaults).map((f) => [f.featureName, f]));
+  const table = document.createElement("table");
+  table.className = "features";
+  table.innerHTML = "<thead><tr><th>Feature</th><th>Value</th><th>Plan default</th><th></th></tr></thead><tbody></tbody>";
+  for (const planFeature of defaults) {
+    const feature = { ...planFeature, ...(current.get(planFeature.featureName) || {}) };
+    const tr = document.createElement("tr");
+    tr.dataset.name = feature.featureName;
+    tr.dataset.title = feature.featureTitle || "";
+    tr.dataset.description = feature.featureDescription || "";
+    tr.dataset.default = planFeature.featureValue ?? "";
+    tr.innerHTML = `<td></td><td><input></td><td class="default"></td><td><button class="link" type="button">Reset</button></td>`;
+    tr.children[0].textContent = formatFeatureTitle(feature);
+    tr.children[0].title = feature.featureName;
+    tr.children[2].textContent = planFeature.featureValue ?? "";
+    const input = tr.querySelector("input");
+    input.value = feature.featureValue ?? "";
+    const reset = tr.querySelector("button");
+    const refresh = () => {
+      const changed = input.value !== tr.dataset.default;
+      tr.classList.toggle("changed", changed);
+      reset.disabled = !changed;
+    };
+    input.addEventListener("input", refresh);
+    reset.addEventListener("click", () => { input.value = tr.dataset.default; refresh(); });
+    refresh();
+    table.tBodies[0].append(tr);
+  }
+  const resetAll = document.createElement("button");
+  resetAll.className = "btn"; resetAll.type = "button"; resetAll.textContent = "Reset all to plan defaults";
+  resetAll.addEventListener("click", () => table.querySelectorAll("tbody tr button").forEach((b) => !b.disabled && b.click()));
+  const row = document.createElement("div"); row.className = "row"; row.append(resetAll);
+  box.append(table, row);
+}
+
+// The edited feature list, or undefined when the section is not editable.
+function readFeatureEditor(containerId) {
+  const box = $(containerId);
+  if (box.dataset.editable !== "1") return undefined;
+  return [...box.querySelectorAll("tbody tr")].map((tr) => ({
+    featureName: tr.dataset.name,
+    ...(tr.dataset.title ? { featureTitle: tr.dataset.title } : {}),
+    ...(tr.dataset.description ? { featureDescription: tr.dataset.description } : {}),
+    featureValue: tr.querySelector("input").value,
+  }));
+}
+
 const NEW_STEPS = ["Load product", "Build payload", "Validate", "Create", "GCP publishes"];
 setSteps("newSteps", NEW_STEPS, 0);
 $("newName").value = `API Demo Offer ${today()}`;
@@ -392,6 +478,8 @@ $("newName").value = `API Demo Offer ${today()}`;
 function syncUsageModelField() {
   const plan = OfferBuilders.productPlans(state.newProduct).find((p) => p.name === $("newPlan").value);
   $("newUsageModelWrap").hidden = plan?.priceInfo?.priceModel !== "USAGE";
+  // A plan switch starts from the new plan's features, as the console does.
+  renderFeatureEditor("newFeatures", plan, state.newProduct);
 }
 $("newPlan").addEventListener("change", syncUsageModelField);
 
@@ -422,6 +510,7 @@ $("newBuild").addEventListener("click", guard("newResult", async () => {
     customerOrganization: $("newCustomerOrg").value.trim(),
     contactName: $("newSalesEmail").value.trim(),
     salesContactEmail: $("newSalesEmail").value.trim(),
+    features: readFeatureEditor("newFeatures"),
   });
   $("newPayload").value = JSON.stringify(offer, null, 2);
   $("newResult").innerHTML = "";
@@ -457,8 +546,9 @@ $("amendFetch").addEventListener("click", guard("amendResult", async () => {
     ["Billing account", base.billingAccount],
     ["Price model", base.usagePlanPriceModel || "—"],
     ["Recurrence", base.recurrence || "(none: usage discount only)"],
-    ["Duration", base.duration ? `${base.duration} months` : "—"],
+    ["Term", base.termMonths ? `${base.termMonths} months` : "—"],
     ["Current discount", `${base.discountPercentage}%`],
+    ["Features", base.features.length ? base.features.map((f) => `${formatFeatureTitle(f)}: ${f.featureValue}`).join(" · ") : "plan defaults"],
     ["Term ends", base.replacedOfferEndTime],
     ["GCP resource", base.replacedOfferResourceName],
   ];
@@ -470,9 +560,23 @@ $("amendFetch").addEventListener("click", guard("amendResult", async () => {
   });
   $("amendName").value = `${base.baseOfferName} - Amendment ${today()}`;
   $("amendDiscount").value = Number(base.discountPercentage || 0) + 5;
+  const plan = OfferBuilders.productPlans(product).find((p) => p.name === base.planName);
+  state.amend.recurrence = OfferBuilders.amendmentRecurrence(base, plan);
+  $("amendDurationLabel").textContent =
+    `Duration (${state.amend.recurrence.replace("_PERIOD", "").toLowerCase()} periods from acceptance)`;
+  $("amendDuration").value = OfferBuilders.defaultAmendmentDuration(base, plan);
+  syncAmendDurationHint();
+  // Start from the original offer's own feature values, falling back to the plan's.
+  renderFeatureEditor("amendFeatures", plan, product, base.features);
   $("amendBase").hidden = false;
   $("amendResult").innerHTML = "";
 }));
+
+function syncAmendDurationHint() {
+  const months = (OfferBuilders.MONTHS_PER_PERIOD[state.amend?.recurrence] || 1) * Number($("amendDuration").value || 0);
+  $("amendDurationHint").textContent = `= ${months} months`;
+}
+$("amendDuration").addEventListener("input", syncAmendDurationHint);
 
 $("amendBuild").addEventListener("click", guard("amendResult", async () => {
   if (!state.amend) throw new Error("Fetch the entitlement first");
@@ -482,6 +586,7 @@ $("amendBuild").addEventListener("click", guard("amendResult", async () => {
     discountPercentage: $("amendDiscount").value,
     duration: $("amendDuration").value,
     expireInDays: $("amendExpire").value,
+    features: readFeatureEditor("amendFeatures"),
   });
   $("amendPayload").value = JSON.stringify(offer, null, 2);
   $("amendResult").innerHTML = "";
