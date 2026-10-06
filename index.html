@@ -60,6 +60,7 @@
   .call pre { margin: 0; background: var(--code-bg); color: var(--code-ink); padding: 10px; max-height: 340px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
   .note { font-size: 12px; color: var(--muted); margin-top: 6px; }
   .callout { border-left: 3px solid var(--warn); padding: 6px 10px; background: var(--chip); border-radius: 4px; font-size: 12.5px; margin-top: 10px; }
+  .callout.danger { border-left-color: var(--bad); color: var(--bad); font-weight: 600; }
   .muted { color: var(--muted); }
   [hidden] { display: none !important; }
 </style>
@@ -68,17 +69,26 @@
 <main>
   <h1>GCP Private Offer API Demo</h1>
   <p class="lede">Creates GCP private offers and amendment offers through the Suger API on
-    <code>https://api.dev.suger.cloud</code>. Each request is shown in the log at the bottom.</p>
+    <code id="hostLabel">https://api.dev.suger.cloud</code>. Each request is shown in the log at the bottom.</p>
 
   <section class="panel">
     <h2>Connection</h2>
     <div class="grid" style="margin-top:12px">
-      <label>Organization ID <input id="orgId" value="pi0O8wuNs"></label>
+      <label>Environment
+        <select id="env">
+          <option value="dev">dev · api.dev.suger.cloud</option>
+          <option value="prod">prod · api.suger.cloud</option>
+        </select></label>
+      <label>Organization ID <input id="orgId"></label>
       <label style="grid-column: span 2">Bearer token
         <input id="token" type="password" placeholder="Paste the JWT (with or without 'Bearer ')" autocomplete="off">
         <span class="hint" id="tokenInfo">Not set</span>
       </label>
     </div>
+    <div class="callout danger" id="prodWarning" hidden>PRODUCTION. Create sends a real private offer
+      to a real customer's billing account and asks for a second click to confirm. The sample IDs
+      on this page (product, billing account, entitlement) only exist on dev; replace them with
+      prod values.</div>
   </section>
 
   <div class="tabs" role="tablist">
@@ -169,9 +179,60 @@
 
 <script src="builders.js"></script>
 <script>
-const API_HOST = "https://api.dev.suger.cloud";
 const $ = (id) => document.getElementById(id);
 const state = { newProduct: null, amend: null };
+
+// ---- environment ------------------------------------------------------------------------
+// server.mjs forwards /api/<env>/* to the host below. Token and org ID are remembered per
+// environment because a dev token does not work on prod and vice versa.
+const ENVIRONMENTS = {
+  dev: { host: "https://api.dev.suger.cloud", defaultOrgId: "pi0O8wuNs" },
+  prod: { host: "https://api.suger.cloud", defaultOrgId: "" },
+};
+function env() { return $("env").value; }
+function apiHost() { return ENVIRONMENTS[env()].host; }
+function remember(key, value) { try { sessionStorage.setItem(`${key}:${env()}`, value); } catch {} }
+function recall(key) { try { return sessionStorage.getItem(`${key}:${env()}`); } catch { return null; } }
+
+function applyEnvironment() {
+  const isProd = env() === "prod";
+  $("hostLabel").textContent = apiHost();
+  $("prodWarning").hidden = !isProd;
+  $("token").value = recall("token") || "";
+  $("orgId").value = recall("orgId") ?? ENVIRONMENTS[env()].defaultOrgId;
+  // Anything loaded so far belongs to the other environment.
+  state.newProduct = null;
+  state.amend = null;
+  $("newPlan").innerHTML = '<option value="">Load product first</option>';
+  $("amendBase").hidden = true;
+  ["newPayload", "amendPayload"].forEach((id) => ($(id).value = ""));
+  ["newResult", "amendResult"].forEach((id) => ($(id).innerHTML = ""));
+  document.querySelectorAll("[data-armed]").forEach(disarm);
+  if (typeof setSteps === "function") {
+    setSteps("newSteps", NEW_STEPS, 0);
+    setSteps("amendSteps", AMEND_STEPS, 0);
+  }
+  describeToken();
+}
+$("env").addEventListener("change", () => {
+  try { sessionStorage.setItem("env", env()); } catch {}
+  applyEnvironment();
+});
+$("orgId").addEventListener("change", () => remember("orgId", $("orgId").value.trim()));
+
+// On prod, Create needs a second click. Returns true when the action should go ahead.
+function confirmOnProd(button, what) {
+  if (env() !== "prod") return true;
+  if (button.dataset.armed === "1") { disarm(button); return true; }
+  button.dataset.label = button.textContent;
+  button.dataset.armed = "1";
+  button.textContent = `Click again to ${what} on PRODUCTION`;
+  return false;
+}
+function disarm(button) {
+  if (button.dataset.label) button.textContent = button.dataset.label;
+  delete button.dataset.armed;
+}
 
 // ---- tabs -------------------------------------------------------------------------------
 document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => {
@@ -199,23 +260,22 @@ function describeToken() {
 }
 $("token").addEventListener("input", describeToken);
 setInterval(describeToken, 30000);
-try { $("token").value = sessionStorage.getItem("demoToken") || ""; } catch {}
-$("token").addEventListener("change", () => { try { sessionStorage.setItem("demoToken", $("token").value); } catch {} });
-describeToken();
+$("token").addEventListener("change", () => remember("token", $("token").value));
 
 // ---- API calls + log --------------------------------------------------------------------
 function orgPath(path) { return `/org/${encodeURIComponent($("orgId").value.trim())}${path}`; }
 
 async function call(method, path, body, { quiet } = {}) {
   const started = performance.now();
-  const res = await fetch("/api" + path, {
+  const host = apiHost();
+  const res = await fetch(`/api/${env()}${path}`, {
     method,
     headers: { Authorization: authHeader(), ...(body ? { "Content-Type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
   let data; try { data = JSON.parse(text); } catch { data = text; }
-  if (!quiet) logCall(method, path, body, res.status, data, Math.round(performance.now() - started));
+  if (!quiet) logCall(method, host + path, body, res.status, data, Math.round(performance.now() - started));
   if (!res.ok) {
     const msg = typeof data === "object" ? data.message || data.error || JSON.stringify(data) : data;
     throw new Error(`${method} ${path} → HTTP ${res.status}: ${msg}`);
@@ -223,7 +283,7 @@ async function call(method, path, body, { quiet } = {}) {
   return data;
 }
 
-function logCall(method, path, body, status, data, ms) {
+function logCall(method, url, body, status, data, ms) {
   const log = $("log");
   log.querySelector("[data-empty]")?.remove();
   const el = document.createElement("details");
@@ -232,7 +292,7 @@ function logCall(method, path, body, status, data, ms) {
   el.innerHTML = `<summary><span class="m"></span><span class="u"></span>
     <span class="status ${cls}">${status}</span><span class="muted">${ms} ms</span></summary>`;
   el.querySelector(".m").textContent = method;
-  el.querySelector(".u").textContent = API_HOST + path;
+  el.querySelector(".u").textContent = url;
   if (body) appendPre(el, "Request body", body);
   appendPre(el, "Response", data);
   log.prepend(el);
@@ -259,7 +319,7 @@ function guard(targetId, fn) {
   return async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
-    try { await fn(); } catch (err) { showError(targetId, err); } finally { button.disabled = false; }
+    try { await fn(button); } catch (err) { showError(targetId, err); } finally { button.disabled = false; }
   };
 }
 function readPayload(id) {
@@ -311,7 +371,7 @@ async function createAndFollow(payloadId, resultId, stepsId, stepLabels, createS
     statusEl.textContent = offer.status;
     if (!IN_FLIGHT.includes(offer.status)) break;
   }
-  logCall("GET", orgPath(`/offer/${created.id}`), null, 200, offer, 0);
+  logCall("GET", apiHost() + orgPath(`/offer/${created.id}`), null, 200, offer, 0);
   const ok = offer.status === "PENDING_ACCEPTANCE";
   const statusEl = box.querySelector("[data-status]");
   statusEl.className = "status " + (ok ? "ok" : IN_FLIGHT.includes(offer.status) ? "warn" : "bad");
@@ -370,8 +430,8 @@ $("newBuild").addEventListener("click", guard("newResult", async () => {
 $("newValidate").addEventListener("click", guard("newResult", async () => {
   await validate("newPayload", "newResult"); setSteps("newSteps", NEW_STEPS, 3);
 }));
-$("newCreate").addEventListener("click", guard("newResult", () =>
-  createAndFollow("newPayload", "newResult", "newSteps", NEW_STEPS, 3)));
+$("newCreate").addEventListener("click", guard("newResult", (button) =>
+  confirmOnProd(button, "create") && createAndFollow("newPayload", "newResult", "newSteps", NEW_STEPS, 3)));
 
 // ---- Case 2: amendment ------------------------------------------------------------------
 const AMEND_STEPS = ["Fetch entitlement", "Fetch original offer", "Fetch product", "Build replacement", "Validate", "Create", "GCP publishes"];
@@ -430,8 +490,12 @@ $("amendBuild").addEventListener("click", guard("amendResult", async () => {
 $("amendValidate").addEventListener("click", guard("amendResult", async () => {
   await validate("amendPayload", "amendResult"); setSteps("amendSteps", AMEND_STEPS, 5);
 }));
-$("amendCreate").addEventListener("click", guard("amendResult", () =>
-  createAndFollow("amendPayload", "amendResult", "amendSteps", AMEND_STEPS, 5)));
+$("amendCreate").addEventListener("click", guard("amendResult", (button) =>
+  confirmOnProd(button, "create") && createAndFollow("amendPayload", "amendResult", "amendSteps", AMEND_STEPS, 5)));
+
+// ---- start ------------------------------------------------------------------------------
+try { $("env").value = sessionStorage.getItem("env") || "dev"; } catch {}
+applyEnvironment();
 </script>
 </body>
 </html>

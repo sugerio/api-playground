@@ -1,16 +1,20 @@
-// Serves the demo page and forwards /api/* to the Suger dev API.
+// Serves the demo page and forwards /api/<env>/* to the Suger API of that environment.
 //
-// The dev API's CORS allowlist only admits http://localhost:3000 (taken by web-react), so the
-// browser talks to this server and this server talks to the API. The Authorization header the
-// page sends is passed through untouched; nothing is stored.
+// The API's CORS allowlist does not admit a page served from here, so the browser talks to
+// this server and this server talks to the API. Only the hosts in API_HOSTS are reachable.
+// The Authorization header the page sends is passed through untouched; nothing is stored.
 //
 //   node server.mjs            -> http://localhost:8787
+//   GET /api/dev/org           -> https://api.dev.suger.cloud/org
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const API_HOST = "https://api.dev.suger.cloud";
+const API_HOSTS = {
+  dev: "https://api.dev.suger.cloud",
+  prod: "https://api.suger.cloud",
+};
 const PORT = Number(process.env.PORT || 8787);
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8" };
@@ -23,8 +27,14 @@ async function readBody(req) {
 
 createServer(async (req, res) => {
   try {
-    if (req.url.startsWith("/api/")) {
-      const target = API_HOST + req.url.slice("/api".length);
+    const apiMatch = req.url.match(/^\/api\/([a-z]+)(\/.*)$/);
+    if (apiMatch) {
+      const host = API_HOSTS[apiMatch[1]];
+      if (!host) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ proxyError: `unknown environment "${apiMatch[1]}"` }));
+      }
+      const target = host + apiMatch[2];
       const headers = {};
       if (req.headers.authorization) headers.Authorization = req.headers.authorization;
       if (req.headers["content-type"]) headers["Content-Type"] = req.headers["content-type"];
@@ -52,4 +62,4 @@ createServer(async (req, res) => {
     res.writeHead(502, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ proxyError: String(err) }));
   }
-}).listen(PORT, () => console.log(`GCP offer demo: http://localhost:${PORT}  (proxying ${API_HOST})`));
+}).listen(PORT, () => console.log(`API playground: http://localhost:${PORT}  (dev -> ${API_HOSTS.dev}, prod -> ${API_HOSTS.prod})`));
