@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GCP Offer API Demo</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --ink: #1b1f24; --muted: #5d6673; --line: #dde1e6;
+    --accent: #1a73e8; --accent-ink: #fff; --ok: #137333; --warn: #b06000; --bad: #c5221f;
+    --code-bg: #0f1720; --code-ink: #d7e0ea; --chip: #eef2f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1217; --panel: #171b22; --ink: #e6e9ee; --muted: #9aa4b2; --line: #2a313b;
+      --accent: #8ab4f8; --accent-ink: #0f1217; --ok: #81c995; --warn: #fdd663; --bad: #f28b82;
+      --code-bg: #0a0d12; --code-ink: #d7e0ea; --chip: #222833;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 0; }
+  h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 18px 0 8px; }
+  p.lede { color: var(--muted); margin: 0 0 20px; }
+  code, .mono, textarea, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 18px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  label .hint { font-size: 11px; }
+  input, select, textarea { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 7px 9px; width: 100%; }
+  textarea { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .tab { border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 8px 14px;
+    border-radius: 999px; cursor: pointer; font-weight: 600; }
+  .tab[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  button.btn { font: inherit; font-weight: 600; border-radius: 6px; padding: 8px 14px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  button.danger { color: var(--bad); border-color: var(--bad); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .steps { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 14px; }
+  .step { background: var(--chip); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--muted); }
+  .step.done { color: var(--ok); } .step.active { color: var(--accent); font-weight: 600; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .status { font-weight: 700; }
+  .status.ok { color: var(--ok); } .status.warn { color: var(--warn); } .status.bad { color: var(--bad); }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 860px) { .split { grid-template-columns: 1fr; } }
+  #log { display: flex; flex-direction: column; gap: 8px; }
+  .call { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .call summary { cursor: pointer; padding: 8px 10px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .call .m { font-weight: 700; font-family: ui-monospace, Menlo, monospace; }
+  .call .u { font-family: ui-monospace, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; flex: 1; min-width: 0; }
+  .call pre { margin: 0; background: var(--code-bg); color: var(--code-ink); padding: 10px; max-height: 340px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .callout { border-left: 3px solid var(--warn); padding: 6px 10px; background: var(--chip); border-radius: 4px; font-size: 12.5px; margin-top: 10px; }
+  .muted { color: var(--muted); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>GCP Private Offer API Demo</h1>
+  <p class="lede">Creates GCP private offers and amendment offers through the Suger API on
+    <code>https://api.dev.suger.cloud</code>. Each request is shown in the log at the bottom.</p>
+
+  <section class="panel">
+    <h2>Connection</h2>
+    <div class="grid" style="margin-top:12px">
+      <label>Organization ID <input id="orgId" value="pi0O8wuNs"></label>
+      <label style="grid-column: span 2">Bearer token
+        <input id="token" type="password" placeholder="Paste the JWT (with or without 'Bearer ')" autocomplete="off">
+        <span class="hint" id="tokenInfo">Not set</span>
+      </label>
+    </div>
+  </section>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" aria-selected="true" data-tab="new">1 · Create private offer</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="amend">2 · Create amendment offer</button>
+  </div>
+
+  <!-- Case 1: new private offer -->
+  <section class="panel" data-pane="new">
+    <h2>Create a new GCP private offer</h2>
+    <div class="steps" id="newSteps"></div>
+    <div class="grid">
+      <label>Product ID <input id="newProductId" value="Q7In3Ar2u"></label>
+      <label>Plan <select id="newPlan"><option value="">Load product first</option></select></label>
+      <label>Billing account <input id="newBilling" value="0111B3-5FB955-6A700D"></label>
+      <label>Offer name <input id="newName"></label>
+      <label>Payment recurrence
+        <select id="newRecurrence">
+          <option>MONTHLY_PERIOD</option><option>QUARTERLY_PERIOD</option><option>YEARLY_PERIOD</option>
+        </select></label>
+      <label>Duration <input id="newDuration" type="number" min="1" value="12">
+        <span class="hint">In recurrence units (12 monthly = 1 year)</span></label>
+      <label>Fee / commitment per period (USD) <input id="newAmount" type="number" step="0.01" value="0.01"></label>
+      <label>Usage discount % <input id="newDiscount" type="number" step="1" value="5">
+        <span class="hint">Ignored on subscription-only plans</span></label>
+      <label id="newUsageModelWrap" hidden>Usage price model
+        <select id="newUsageModel">
+          <option>USAGE_DISCOUNT_ONLY</option><option>CUD_LIST_PRICE</option><option>CUD_ALL_USAGE_DISCOUNTED</option>
+        </select></label>
+      <label>Expires in (days) <input id="newExpire" type="number" min="1" value="6"></label>
+      <label>Customer organization <input id="newCustomerOrg" value="Demo Customer"></label>
+      <label>Sales contact email <input id="newSalesEmail" value="alvin@suger.io"></label>
+    </div>
+    <div class="row">
+      <button class="btn" id="newLoad">① Load product</button>
+      <button class="btn" id="newBuild">② Build payload</button>
+    </div>
+    <h3>Request body · POST /org/{orgId}/offer <span class="muted">(editable)</span></h3>
+    <textarea id="newPayload" rows="16" spellcheck="false" placeholder="Build the payload first"></textarea>
+    <div class="row">
+      <button class="btn" id="newValidate">③ Validate (dry run)</button>
+      <button class="btn primary" id="newCreate">④ Create offer</button>
+    </div>
+    <div id="newResult"></div>
+  </section>
+
+  <!-- Case 2: amendment -->
+  <section class="panel" data-pane="amend" hidden>
+    <h2>Create an amendment (replacement) offer from an entitlement</h2>
+    <div class="steps" id="amendSteps"></div>
+    <div class="grid">
+      <label>Entitlement ID <input id="amendEntitlementId" value="843I8Frci"></label>
+    </div>
+    <div class="row"><button class="btn" id="amendFetch">① Fetch entitlement → original offer → product</button></div>
+
+    <div id="amendBase" hidden>
+      <h3>Original offer (live on GCP)</h3>
+      <dl class="kv" id="amendBaseKv"></dl>
+      <h3>What to change</h3>
+      <div class="grid">
+        <label>Offer name <input id="amendName"></label>
+        <label>Usage discount % <input id="amendDiscount" type="number" step="1"></label>
+        <label>Duration (months from acceptance) <input id="amendDuration" type="number" min="1" value="12"></label>
+        <label>Expires in (days) <input id="amendExpire" type="number" min="1" value="5"></label>
+      </div>
+      <div class="callout">Not co-termed. Through the GCP Commerce API, a co-termed amendment becomes a fixed
+        end date, and Google rejects end dates on monthly/quarterly/yearly billing. So the amendment
+        runs for the duration above, counted from when the buyer accepts it.</div>
+      <div class="row"><button class="btn" id="amendBuild">② Build replacement payload</button></div>
+    </div>
+
+    <h3>Request body · POST /org/{orgId}/offer <span class="muted">(editable)</span></h3>
+    <textarea id="amendPayload" rows="16" spellcheck="false" placeholder="Fetch the entitlement and build the payload first"></textarea>
+    <div class="row">
+      <button class="btn" id="amendValidate">③ Validate (dry run)</button>
+      <button class="btn primary" id="amendCreate">④ Create amendment</button>
+    </div>
+    <div id="amendResult"></div>
+  </section>
+
+  <section class="panel">
+    <div class="row" style="margin:0 0 10px; justify-content: space-between">
+      <h2>API calls</h2><button class="btn" id="clearLog">Clear</button>
+    </div>
+    <div id="log"><span class="muted" data-empty>No calls yet.</span></div>
+  </section>
+</main>
+
+<script src="builders.js"></script>
+<script>
+const API_HOST = "https://api.dev.suger.cloud";
+const $ = (id) => document.getElementById(id);
+const state = { newProduct: null, amend: null };
+
+// ---- tabs -------------------------------------------------------------------------------
+document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", t === tab));
+  document.querySelectorAll("[data-pane]").forEach((p) => (p.hidden = p.dataset.pane !== tab.dataset.tab));
+}));
+
+// ---- token ------------------------------------------------------------------------------
+function authHeader() {
+  const raw = $("token").value.trim();
+  if (!raw) throw new Error("Paste a bearer token first");
+  return raw.startsWith("Bearer ") ? raw : "Bearer " + raw;
+}
+function describeToken() {
+  const raw = $("token").value.trim().replace(/^Bearer\s+/, "");
+  const info = $("tokenInfo");
+  if (!raw) { info.textContent = "Not set"; info.className = "hint"; return; }
+  try {
+    const claims = JSON.parse(atob(raw.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    const mins = Math.round((claims.exp * 1000 - Date.now()) / 60000);
+    const who = claims["https://api.suger.cloud/email"] || claims.sub;
+    info.textContent = mins > 0 ? `${who} · expires in ${mins} min` : `${who} · EXPIRED ${-mins} min ago`;
+    info.className = "hint status " + (mins > 5 ? "ok" : mins > 0 ? "warn" : "bad");
+  } catch { info.textContent = "Not a JWT"; info.className = "hint status bad"; }
+}
+$("token").addEventListener("input", describeToken);
+setInterval(describeToken, 30000);
+try { $("token").value = sessionStorage.getItem("demoToken") || ""; } catch {}
+$("token").addEventListener("change", () => { try { sessionStorage.setItem("demoToken", $("token").value); } catch {} });
+describeToken();
+
+// ---- API calls + log --------------------------------------------------------------------
+function orgPath(path) { return `/org/${encodeURIComponent($("orgId").value.trim())}${path}`; }
+
+async function call(method, path, body, { quiet } = {}) {
+  const started = performance.now();
+  const res = await fetch("/api" + path, {
+    method,
+    headers: { Authorization: authHeader(), ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data; try { data = JSON.parse(text); } catch { data = text; }
+  if (!quiet) logCall(method, path, body, res.status, data, Math.round(performance.now() - started));
+  if (!res.ok) {
+    const msg = typeof data === "object" ? data.message || data.error || JSON.stringify(data) : data;
+    throw new Error(`${method} ${path} → HTTP ${res.status}: ${msg}`);
+  }
+  return data;
+}
+
+function logCall(method, path, body, status, data, ms) {
+  const log = $("log");
+  log.querySelector("[data-empty]")?.remove();
+  const el = document.createElement("details");
+  el.className = "call";
+  const cls = status < 300 ? "ok" : status < 500 ? "warn" : "bad";
+  el.innerHTML = `<summary><span class="m"></span><span class="u"></span>
+    <span class="status ${cls}">${status}</span><span class="muted">${ms} ms</span></summary>`;
+  el.querySelector(".m").textContent = method;
+  el.querySelector(".u").textContent = API_HOST + path;
+  if (body) appendPre(el, "Request body", body);
+  appendPre(el, "Response", data);
+  log.prepend(el);
+}
+function appendPre(parent, title, value) {
+  const h = document.createElement("div");
+  h.className = "note"; h.style.padding = "6px 10px"; h.textContent = title;
+  const pre = document.createElement("pre");
+  pre.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  parent.append(h, pre);
+}
+$("clearLog").addEventListener("click", () => ($("log").innerHTML = '<span class="muted" data-empty>No calls yet.</span>'));
+
+// ---- shared UI helpers ------------------------------------------------------------------
+function setSteps(id, labels, activeIndex) {
+  $(id).innerHTML = labels.map((l, i) =>
+    `<span class="step ${i < activeIndex ? "done" : i === activeIndex ? "active" : ""}">${i < activeIndex ? "✓ " : ""}${l}</span>`).join("");
+}
+function showError(targetId, err) {
+  $(targetId).innerHTML = `<p class="status bad"></p>`;
+  $(targetId).querySelector("p").textContent = err.message || String(err);
+}
+function guard(targetId, fn) {
+  return async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try { await fn(); } catch (err) { showError(targetId, err); } finally { button.disabled = false; }
+  };
+}
+function readPayload(id) {
+  const text = $(id).value.trim();
+  if (!text) throw new Error("Build the payload first");
+  try { return JSON.parse(text); } catch (e) { throw new Error("Request body is not valid JSON: " + e.message); }
+}
+function today() { return new Date().toISOString().slice(0, 10); }
+
+async function validate(payloadId, resultId) {
+  const verdict = await call("POST", orgPath("/offer/validate"), readPayload(payloadId));
+  const findings = verdict.findings || [];
+  $(resultId).innerHTML = `<p class="status ${verdict.valid ? "ok" : "bad"}">${verdict.valid ? "✓ Valid: the backend would accept this offer" : "✗ Invalid"}</p>`;
+  if (findings.length) {
+    const ul = document.createElement("ul");
+    findings.forEach((f) => { const li = document.createElement("li"); li.textContent = `[${f.source}] ${f.message}`; ul.append(li); });
+    $(resultId).append(ul);
+  }
+}
+
+// Create, then follow the offer until GCP has published (or refused) it. The create call
+// only returns DRAFT; the GCP outcome arrives a few seconds later on the offer row.
+const IN_FLIGHT = ["DRAFT", "PENDING_CREATE", "CREATE_SUCCESS", ""];
+async function createAndFollow(payloadId, resultId, stepsId, stepLabels, createStep) {
+  const created = await call("POST", orgPath("/offer"), readPayload(payloadId));
+  setSteps(stepsId, stepLabels, createStep + 1);
+  const box = $(resultId);
+  box.innerHTML = `<h3>Created offer</h3><dl class="kv">
+      <dt>Suger offer ID</dt><dd class="mono"></dd>
+      <dt>Status</dt><dd><span class="status warn" data-status>${created.status}</span> <span class="muted" data-poll>following…</span></dd>
+      <dt>GCP offer</dt><dd data-gcp class="muted">waiting for GCP</dd>
+      <dt>Error</dt><dd data-err class="muted">—</dd></dl>
+      <div class="row"><button class="btn danger" data-cancel hidden>Cancel this offer</button></div>`;
+  box.querySelector("dd.mono").textContent = created.id;
+  const cancel = box.querySelector("[data-cancel]");
+  cancel.addEventListener("click", guard(resultId, async () => {
+    if (cancel.dataset.armed !== "1") { cancel.dataset.armed = "1"; cancel.textContent = "Click again to cancel on GCP"; return; }
+    await call("POST", orgPath(`/offer/${created.id}/cancel`));
+    cancel.hidden = true;
+    box.querySelector("[data-status]").textContent = "CANCEL requested";
+  }));
+
+  const deadline = Date.now() + 180000;
+  let offer = created;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 3000));
+    offer = await call("GET", orgPath(`/offer/${created.id}`), null, { quiet: true });
+    const statusEl = box.querySelector("[data-status]");
+    statusEl.textContent = offer.status;
+    if (!IN_FLIGHT.includes(offer.status)) break;
+  }
+  logCall("GET", orgPath(`/offer/${created.id}`), null, 200, offer, 0);
+  const ok = offer.status === "PENDING_ACCEPTANCE";
+  const statusEl = box.querySelector("[data-status]");
+  statusEl.className = "status " + (ok ? "ok" : IN_FLIGHT.includes(offer.status) ? "warn" : "bad");
+  box.querySelector("[data-poll]").textContent = IN_FLIGHT.includes(offer.status) ? "still in flight after 3 min" : "";
+  const url = offer.info?.privateOfferUrl;
+  const gcp = box.querySelector("[data-gcp]");
+  if (url) { gcp.className = ""; gcp.innerHTML = `<a target="_blank" rel="noopener"></a>`; gcp.firstChild.href = url; gcp.firstChild.textContent = offer.externalID || url; }
+  const errors = offer.metaInfo?.errorMessages || [];
+  if (errors.length) { const e = box.querySelector("[data-err]"); e.className = "status bad"; e.textContent = errors.join(" · "); }
+  if (ok) { cancel.hidden = false; setSteps(stepsId, stepLabels, stepLabels.length); }
+}
+
+// ---- Case 1: new private offer ----------------------------------------------------------
+const NEW_STEPS = ["Load product", "Build payload", "Validate", "Create", "GCP publishes"];
+setSteps("newSteps", NEW_STEPS, 0);
+$("newName").value = `API Demo Offer ${today()}`;
+
+function syncUsageModelField() {
+  const plan = OfferBuilders.productPlans(state.newProduct).find((p) => p.name === $("newPlan").value);
+  $("newUsageModelWrap").hidden = plan?.priceInfo?.priceModel !== "USAGE";
+}
+$("newPlan").addEventListener("change", syncUsageModelField);
+
+$("newLoad").addEventListener("click", guard("newResult", async () => {
+  state.newProduct = await call("GET", orgPath(`/product/${encodeURIComponent($("newProductId").value.trim())}`));
+  const plans = OfferBuilders.productPlans(state.newProduct);
+  $("newPlan").innerHTML = plans.map((p) =>
+    `<option value="${p.name}">${p.name} · ${p.priceInfo?.priceModel || "?"}</option>`).join("");
+  syncUsageModelField();
+  $("newResult").innerHTML = `<p class="status ok">Loaded ${state.newProduct.name} (${plans.length} plans)</p>`;
+  setSteps("newSteps", NEW_STEPS, 1);
+}));
+
+$("newBuild").addEventListener("click", guard("newResult", async () => {
+  if (!state.newProduct) throw new Error("Load the product first");
+  const offer = OfferBuilders.buildNewPrivateOffer({
+    orgId: $("orgId").value.trim(),
+    product: state.newProduct,
+    planName: $("newPlan").value,
+    billingAccount: $("newBilling").value.trim(),
+    offerName: $("newName").value.trim(),
+    recurrence: $("newRecurrence").value,
+    duration: $("newDuration").value,
+    amount: $("newAmount").value,
+    discountPercentage: $("newDiscount").value,
+    usagePlanPriceModel: $("newUsageModel").value,
+    expireInDays: $("newExpire").value,
+    customerOrganization: $("newCustomerOrg").value.trim(),
+    contactName: $("newSalesEmail").value.trim(),
+    salesContactEmail: $("newSalesEmail").value.trim(),
+  });
+  $("newPayload").value = JSON.stringify(offer, null, 2);
+  $("newResult").innerHTML = "";
+  setSteps("newSteps", NEW_STEPS, 2);
+}));
+$("newValidate").addEventListener("click", guard("newResult", async () => {
+  await validate("newPayload", "newResult"); setSteps("newSteps", NEW_STEPS, 3);
+}));
+$("newCreate").addEventListener("click", guard("newResult", () =>
+  createAndFollow("newPayload", "newResult", "newSteps", NEW_STEPS, 3)));
+
+// ---- Case 2: amendment ------------------------------------------------------------------
+const AMEND_STEPS = ["Fetch entitlement", "Fetch original offer", "Fetch product", "Build replacement", "Validate", "Create", "GCP publishes"];
+setSteps("amendSteps", AMEND_STEPS, 0);
+
+$("amendFetch").addEventListener("click", guard("amendResult", async () => {
+  $("amendBase").hidden = true;
+  const entitlement = await call("GET", orgPath(`/entitlement/${encodeURIComponent($("amendEntitlementId").value.trim())}`));
+  setSteps("amendSteps", AMEND_STEPS, 1);
+  if (entitlement.partner !== "GCP") throw new Error(`Entitlement ${entitlement.id} is ${entitlement.partner}, not GCP`);
+  const baseOffer = await call("GET", orgPath(`/offer/${entitlement.offerID}`));
+  setSteps("amendSteps", AMEND_STEPS, 2);
+  const product = await call("GET", orgPath(`/product/${entitlement.productID}`));
+  setSteps("amendSteps", AMEND_STEPS, 3);
+  state.amend = { entitlement, baseOffer, product };
+
+  const base = OfferBuilders.describeBase(entitlement, baseOffer);
+  const rows = [
+    ["Entitlement", `${base.entitlementId} · ${base.entitlementStatus}`],
+    ["Original offer", `${base.baseOfferId} · ${base.baseOfferName}`],
+    ["GCP state", base.baseOfferState],
+    ["Plan", base.planName],
+    ["Billing account", base.billingAccount],
+    ["Price model", base.usagePlanPriceModel || "—"],
+    ["Recurrence", base.recurrence || "(none: usage discount only)"],
+    ["Duration", base.duration ? `${base.duration} months` : "—"],
+    ["Current discount", `${base.discountPercentage}%`],
+    ["Term ends", base.replacedOfferEndTime],
+    ["GCP resource", base.replacedOfferResourceName],
+  ];
+  $("amendBaseKv").innerHTML = "";
+  rows.forEach(([k, v]) => {
+    const dt = document.createElement("dt"); dt.textContent = k;
+    const dd = document.createElement("dd"); dd.textContent = v ?? "—";
+    $("amendBaseKv").append(dt, dd);
+  });
+  $("amendName").value = `${base.baseOfferName} - Amendment ${today()}`;
+  $("amendDiscount").value = Number(base.discountPercentage || 0) + 5;
+  $("amendBase").hidden = false;
+  $("amendResult").innerHTML = "";
+}));
+
+$("amendBuild").addEventListener("click", guard("amendResult", async () => {
+  if (!state.amend) throw new Error("Fetch the entitlement first");
+  const offer = OfferBuilders.buildAmendmentOffer({
+    ...state.amend,
+    offerName: $("amendName").value.trim(),
+    discountPercentage: $("amendDiscount").value,
+    duration: $("amendDuration").value,
+    expireInDays: $("amendExpire").value,
+  });
+  $("amendPayload").value = JSON.stringify(offer, null, 2);
+  $("amendResult").innerHTML = "";
+  setSteps("amendSteps", AMEND_STEPS, 4);
+}));
+$("amendValidate").addEventListener("click", guard("amendResult", async () => {
+  await validate("amendPayload", "amendResult"); setSteps("amendSteps", AMEND_STEPS, 5);
+}));
+$("amendCreate").addEventListener("click", guard("amendResult", () =>
+  createAndFollow("amendPayload", "amendResult", "amendSteps", AMEND_STEPS, 5)));
+</script>
+</body>
+</html>
